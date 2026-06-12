@@ -1,16 +1,22 @@
 package server
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	databasev1 "github.com/Muxcore-Media/core/proto/gen/muxcore/database/v1"
 	"github.com/Muxcore-Media/database-sqlite/internal/db"
 )
 
 type Server struct {
+	databasev1.UnimplementedDatabaseServiceServer
 	database      *db.Database
 	execCount     atomic.Int64
 	queryCount    atomic.Int64
@@ -21,66 +27,39 @@ func New(d *db.Database) *Server {
 	return &Server{database: d}
 }
 
-func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/db/exec", s.handleExec)
-	mux.HandleFunc("/v1/db/query", s.handleQuery)
-	mux.HandleFunc("/v1/db/transaction", s.handleTransaction)
-	mux.HandleFunc("/v1/db/migrate", s.handleMigrate)
-	mux.HandleFunc("/v1/db/rollback", s.handleRollback)
-	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/metrics", s.handleMetrics)
-	return mux
+func (s *Server) RegisterWithGRPC(srv *grpc.Server) {
+	databasev1.RegisterDatabaseServiceServer(srv, s)
 }
 
-func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
-		return
+func (s *Server) Exec(ctx context.Context, req *databasev1.ExecRequest) (*databasev1.ExecResponse, error) {
+	if req.GetQuery() == "" {
+		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
-
-	var req struct {
-		Query string `json:"query"`
-		Args  []any  `json:"args"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	n, err := s.database.Exec(r.Context(), req.Query, req.Args...)
+	args := protoArgsToAny(req.GetArgs())
+	n, err := s.database.Exec(ctx, req.GetQuery(), args...)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
-		return
+		slog.Error("database: exec failed", "error", err)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	s.execCount.Add(1)
-	writeJSON(w, http.StatusOK, map[string]any{"rows_affected": n})
+	return &databasev1.ExecResponse{RowsAffected: n}, nil
 }
 
-func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
-		return
+func (s *Server) Query(ctx context.Context, req *databasev1.QueryRequest) (*databasev1.QueryResponse, error) {
+	if req.GetQuery() == "" {
+		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
-
-	var req struct {
-		Query string `json:"query"`
-		Args  []any  `json:"args"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	rows, err := s.database.Query(r.Context(), req.Query, req.Args...)
+	args := protoArgsToAny(req.GetArgs())
+	rows, err := s.database.Query(ctx, req.GetQuery(), args...)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
-		return
+		slog.Error("database: query failed", "error", err)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	defer rows.Close()
 
-	var results []map[string]any
-	cols := guessColumns(req.Query)
+	cols := guessColumns(req.GetQuery())
+	resp := &databasev1.QueryResponse{Columns: cols}
+
 	for rows.Next() {
 		values := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
@@ -88,119 +67,67 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ptrs[i] = &values[i]
 		}
 		if err := rows.Scan(ptrs...); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"scan: %s"}`, err), http.StatusInternalServerError)
-			return
+			return nil, status.Error(codes.Internal, fmt.Sprintf("scan: %s", err))
 		}
-		row := make(map[string]any)
-		for i, col := range cols {
-			row[col] = values[i]
+		protoRow := &databasev1.Row{}
+		for _, v := range values {
+			protoRow.Values = append(protoRow.Values, anyToProtoValue(v))
 		}
-		results = append(results, row)
+		resp.Rows = append(resp.Rows, protoRow)
 	}
 
+	resp.Count = int32(len(resp.Rows))
 	s.queryCount.Add(1)
-	writeJSON(w, http.StatusOK, map[string]any{"rows": results, "count": len(results)})
+	return resp, nil
 }
 
-func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
-		return
+func (s *Server) Transaction(ctx context.Context, req *databasev1.TransactionRequest) (*databasev1.TransactionResponse, error) {
+	stmts := req.GetStatements()
+	if len(stmts) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "at least one statement is required")
 	}
 
-	var req struct {
-		Statements []struct {
-			Query string `json:"query"`
-			Args  []any  `json:"args"`
-		} `json:"statements"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	err := s.database.Transaction(r.Context(), func(tx *db.Tx) error {
-		for _, stmt := range req.Statements {
-			if _, err := tx.Exec(r.Context(), stmt.Query, stmt.Args...); err != nil {
+	err := s.database.Transaction(ctx, func(tx *db.Tx) error {
+		for _, stmt := range stmts {
+			args := protoArgsToAny(stmt.GetArgs())
+			if _, err := tx.Exec(ctx, stmt.GetQuery(), args...); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
-		return
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	return &databasev1.TransactionResponse{Status: "ok"}, nil
 }
 
-func (s *Server) handleMigrate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req struct {
-		Migrations []struct {
-			Version int    `json:"version"`
-			Name    string `json:"name"`
-			Up      string `json:"up"`
-			Down    string `json:"down"`
-		} `json:"migrations"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 10<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	migs := make([]db.Migration, len(req.Migrations))
-	for i, m := range req.Migrations {
-		migs[i] = db.Migration{
-			Version: m.Version,
-			Name:    m.Name,
-			Up:      m.Up,
-			Down:    m.Down,
+func (s *Server) Migrate(ctx context.Context, req *databasev1.MigrateRequest) (*databasev1.MigrateResponse, error) {
+	migs := req.GetMigrations()
+	converted := make([]db.Migration, len(migs))
+	for i, m := range migs {
+		converted[i] = db.Migration{
+			Version: int(m.GetVersion()),
+			Name:    m.GetName(),
+			Up:      m.GetUpSql(),
+			Down:    m.GetDownSql(),
 		}
 	}
-
-	if err := s.database.Migrate(r.Context(), migs); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
-		return
+	if err := s.database.Migrate(ctx, converted); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	s.migrateCount.Add(1)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	return &databasev1.MigrateResponse{Status: "ok"}, nil
 }
 
-func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, `{"error":"POST required"}`, http.StatusMethodNotAllowed)
-		return
+func (s *Server) Rollback(ctx context.Context, req *databasev1.RollbackRequest) (*databasev1.RollbackResponse, error) {
+	if err := s.database.Rollback(ctx, int(req.GetTargetVersion())); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-
-	var req struct {
-		TargetVersion int `json:"target_version"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
-		return
-	}
-
-	if err := s.database.Rollback(r.Context(), req.TargetVersion); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	return &databasev1.RollbackResponse{Status: "ok"}, nil
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if err := s.database.Health(r.Context()); err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unhealthy", "error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+func (s *Server) Metrics() string {
 	var b strings.Builder
 	b.WriteString("# HELP db_exec_total Total database exec operations\n")
 	b.WriteString("# TYPE db_exec_total counter\n")
@@ -211,8 +138,51 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	b.WriteString("# HELP db_migrate_total Total database migration operations\n")
 	b.WriteString("# TYPE db_migrate_total counter\n")
 	fmt.Fprintf(&b, "db_migrate_total %d\n", s.migrateCount.Load())
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.Write([]byte(b.String()))
+	return b.String()
+}
+
+func protoArgsToAny(args []*databasev1.Value) []any {
+	result := make([]any, len(args))
+	for i, a := range args {
+		if a == nil {
+			result[i] = nil
+			continue
+		}
+		switch v := a.Kind.(type) {
+		case *databasev1.Value_StringVal:
+			result[i] = v.StringVal
+		case *databasev1.Value_IntVal:
+			result[i] = v.IntVal
+		case *databasev1.Value_FloatVal:
+			result[i] = v.FloatVal
+		case *databasev1.Value_BoolVal:
+			result[i] = v.BoolVal
+		case *databasev1.Value_BytesVal:
+			result[i] = v.BytesVal
+		case *databasev1.Value_NullVal:
+			result[i] = nil
+		}
+	}
+	return result
+}
+
+func anyToProtoValue(v any) *databasev1.Value {
+	switch val := v.(type) {
+	case string:
+		return &databasev1.Value{Kind: &databasev1.Value_StringVal{StringVal: val}}
+	case int64:
+		return &databasev1.Value{Kind: &databasev1.Value_IntVal{IntVal: val}}
+	case int:
+		return &databasev1.Value{Kind: &databasev1.Value_IntVal{IntVal: int64(val)}}
+	case float64:
+		return &databasev1.Value{Kind: &databasev1.Value_FloatVal{FloatVal: val}}
+	case bool:
+		return &databasev1.Value{Kind: &databasev1.Value_BoolVal{BoolVal: val}}
+	case []byte:
+		return &databasev1.Value{Kind: &databasev1.Value_BytesVal{BytesVal: val}}
+	default:
+		return &databasev1.Value{Kind: &databasev1.Value_NullVal{NullVal: true}}
+	}
 }
 
 func guessColumns(query string) []string {
@@ -246,10 +216,4 @@ func guessColumns(query string) []string {
 		return []string{"col"}
 	}
 	return cols
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
 }

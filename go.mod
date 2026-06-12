@@ -2,13 +2,10 @@ module github.com/Muxcore-Media/database-sqlite
 
 go 1.26.4
 
-replace github.com/Muxcore-Media/core => ../core
-
-replace github.com/Muxcore-Media/core/pkg/contracts => ../core/pkg/contracts
-
 require (
 	github.com/Muxcore-Media/core v0.4.0
 	github.com/Muxcore-Media/core/pkg/contracts v0.0.0
+	github.com/Muxcore-Media/core/sdk/go/module v0.1.0
 	google.golang.org/grpc v1.81.1
 	modernc.org/sqlite v1.52.0
 )
@@ -28,3 +25,9 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/Muxcore-Media/core => ../core
+
+replace github.com/Muxcore-Media/core/sdk/go/module => ../core/sdk/go/module
+
+replace github.com/Muxcore-Media/core/pkg/contracts => ../core/pkg/contracts
