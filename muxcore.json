@@ -5,5 +5,12 @@
   "author": "MuxCore",
   "roles": ["infrastructure"],
   "capabilities": ["database"],
-  "contracts": []
+  "contracts": [
+    {
+      "repo": "github.com/Muxcore-Media/core/pkg/contracts",
+      "interface": "DatabaseProvider",
+      "version": "v0.4.0"
+    }
+  ],
+  "minCoreVersion": "0.4.0"
 }

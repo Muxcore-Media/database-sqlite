@@ -12,8 +12,7 @@ import (
 func main() {
 	mod := internal.NewModule(internal.Config{})
 	if err := modulesdk.Run(modulesdk.Config{
-		Module:   mod,
-		Insecure: true,
+		Module: mod,
 	}); err != nil {
 		slog.Error("module exited", "error", err)
 		os.Exit(1)

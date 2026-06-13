@@ -3,7 +3,7 @@
 GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 LDFLAGS ?= -s -w -X main.version=$(VERSION)
-BINARY ?= your-module
+BINARY ?= database-sqlite
 
 build:
 	$(GO) build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/module
@@ -26,8 +26,8 @@ tidy:
 	$(GO) mod tidy
 
 docker:
-	docker build -t ghcr.io/yourorg/$(BINARY):$(VERSION) .
-	docker tag ghcr.io/yourorg/$(BINARY):$(VERSION) ghcr.io/yourorg/$(BINARY):latest
+	docker build -t ghcr.io/muxcore-media/$(BINARY):$(VERSION) .
+	docker tag ghcr.io/muxcore-media/$(BINARY):$(VERSION) ghcr.io/muxcore-media/$(BINARY):latest
 
 docker-push: docker
 	docker push ghcr.io/yourorg/$(BINARY):$(VERSION)

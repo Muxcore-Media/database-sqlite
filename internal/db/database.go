@@ -11,9 +11,9 @@ import (
 )
 
 type Database struct {
-	mu     sync.Mutex
-	db     *sql.DB
-	path   string
+	mu   sync.Mutex
+	db   *sql.DB
+	path string
 }
 
 type Rows struct {

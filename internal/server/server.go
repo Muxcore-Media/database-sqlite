@@ -17,10 +17,10 @@ import (
 
 type Server struct {
 	databasev1.UnimplementedDatabaseServiceServer
-	database      *db.Database
-	execCount     atomic.Int64
-	queryCount    atomic.Int64
-	migrateCount  atomic.Int64
+	database     *db.Database
+	execCount    atomic.Int64
+	queryCount   atomic.Int64
+	migrateCount atomic.Int64
 }
 
 func New(d *db.Database) *Server {

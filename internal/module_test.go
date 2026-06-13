@@ -15,6 +15,15 @@ func TestModuleInfo(t *testing.T) {
 	if info.Version == "" {
 		t.Error("module version must not be empty")
 	}
+	if info.MinCoreVersion == "" {
+		t.Error("MinCoreVersion must not be empty")
+	}
+	if len(info.Contracts) == 0 {
+		t.Error("Contracts must not be empty")
+	}
+	if info.Contracts[0].Interface != "DatabaseProvider" {
+		t.Errorf("expected DatabaseProvider contract, got %s", info.Contracts[0].Interface)
+	}
 }
 
 func TestModuleLifecycle(t *testing.T) {
