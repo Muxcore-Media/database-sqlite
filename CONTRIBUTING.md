@@ -1,4 +1,4 @@
-# Contributing to Your Module
+# Contributing
 
 ## Development Setup
 
@@ -10,8 +10,8 @@
 ### Clone and build
 
 ```bash
-git clone https://github.com/yourorg/your-module.git
-cd your-module
+git clone https://github.com/Muxcore-Media/database-sqlite.git
+cd database-sqlite
 make build
 ```
 
@@ -23,7 +23,7 @@ cd ../core
 MUXCORE_INSECURE_DISABLE_TLS=true ./muxcored
 
 # Terminal 2: start module
-make build && ./your-module --muxcore-mesh-addr localhost:9090
+make build && ./database-sqlite --muxcore-mesh-addr localhost:9090
 ```
 
 ## Running Tests
