@@ -62,7 +62,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 		Roles:        []string{"infrastructure"},
 		Description:  "SQLite database provider (pure Go, no CGO)",
 		Author:       "MuxCore",
-		Capabilities: []string{contracts.CapabilityDatabase},
+		Capabilities: []string{contracts.CapabilityDatabase, "database.sqlite"},
 		HTTPAddr:     m.grpcAddr,
 	}
 }
