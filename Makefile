@@ -3,7 +3,7 @@
 GO ?= go
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-dev")
 LDFLAGS ?= -s -w -X main.version=$(VERSION)
-BINARY ?= your-module
+BINARY ?= database-sqlite
 
 build:
 	$(GO) build -ldflags="$(LDFLAGS)" -o $(BINARY) ./cmd/module

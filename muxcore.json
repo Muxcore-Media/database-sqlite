@@ -3,7 +3,12 @@
   "description": "SQLite database provider (pure Go, no CGO)",
   "version": "0.1.0",
   "author": "MuxCore",
-  "roles": ["infrastructure"],
-  "capabilities": ["database"],
+  "roles": [
+    "infrastructure"
+  ],
+  "capabilities": [
+    "database",
+    "database.sqlite"
+  ],
   "contracts": []
 }

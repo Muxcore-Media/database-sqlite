@@ -9,4 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial project scaffold from muxcore-module-starter
+- SQLite database sidecar (`database` capability) via `modernc.org/sqlite` (no CGO)
+- gRPC `DatabaseService`: Exec, Query, Transaction, Migrate, Rollback
+- Config: `SQLITE_DB_PATH` (default `muxcore.db`), `DATABASE_GRPC_ADDR` (default `:9700`)
