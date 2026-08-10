@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sync"
 
 	"google.golang.org/grpc"
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
+	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
 	"github.com/Muxcore-Media/database-sqlite/internal/db"
 	"github.com/Muxcore-Media/database-sqlite/internal/server"
 )
@@ -21,6 +23,7 @@ type Module struct {
 	lis      net.Listener
 
 	id       string
+	cfgMu    sync.RWMutex
 	dbPath   string
 	grpcAddr string
 }
@@ -58,7 +61,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Database SQLite",
-		Version:      "0.1.3",
+		Version:      "0.1.4",
 		Roles:        []string{"infrastructure"},
 		Description:  "SQLite database provider (pure Go, no CGO)",
 		Author:       "MuxCore",
@@ -88,6 +91,7 @@ func (m *Module) Init(ctx context.Context) error {
 func (m *Module) Start(ctx context.Context) error {
 	m.grpcSrv = grpc.NewServer()
 	m.srv.RegisterWithGRPC(m.grpcSrv)
+	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
 
 	go func() {
 		slog.Info("database-sqlite gRPC service started", "addr", m.grpcAddr)
