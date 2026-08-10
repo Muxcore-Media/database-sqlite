@@ -58,7 +58,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Database SQLite",
-		Version:      "0.1.0",
+		Version:      "0.1.3",
 		Roles:        []string{"infrastructure"},
 		Description:  "SQLite database provider (pure Go, no CGO)",
 		Author:       "MuxCore",
