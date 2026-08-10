@@ -1,14 +1,15 @@
 {
   "name": "Database SQLite",
   "description": "SQLite database provider (pure Go, no CGO)",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": "MuxCore",
   "roles": [
     "infrastructure"
   ],
   "capabilities": [
     "database",
-    "database.sqlite"
+    "database.sqlite",
+    "settings"
   ],
   "contracts": []
 }
