@@ -17,14 +17,25 @@ import (
 
 type Server struct {
 	databasev1.UnimplementedDatabaseServiceServer
-	database      *db.Database
-	execCount     atomic.Int64
-	queryCount    atomic.Int64
-	migrateCount  atomic.Int64
+	dbPtr        atomic.Pointer[db.Database]
+	execCount    atomic.Int64
+	queryCount   atomic.Int64
+	migrateCount atomic.Int64
 }
 
 func New(d *db.Database) *Server {
-	return &Server{database: d}
+	s := &Server{}
+	s.dbPtr.Store(d)
+	return s
+}
+
+// ReplaceDatabase swaps the backing SQLite handle. Returns the previous DB (caller should Close).
+func (s *Server) ReplaceDatabase(d *db.Database) *db.Database {
+	return s.dbPtr.Swap(d)
+}
+
+func (s *Server) db() *db.Database {
+	return s.dbPtr.Load()
 }
 
 func (s *Server) RegisterWithGRPC(srv *grpc.Server) {
@@ -36,7 +47,7 @@ func (s *Server) Exec(ctx context.Context, req *databasev1.ExecRequest) (*databa
 		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
 	args := protoArgsToAny(req.GetArgs())
-	n, err := s.database.Exec(ctx, req.GetQuery(), args...)
+	n, err := s.db().Exec(ctx, req.GetQuery(), args...)
 	if err != nil {
 		slog.Error("database: exec failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -50,7 +61,7 @@ func (s *Server) Query(ctx context.Context, req *databasev1.QueryRequest) (*data
 		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
 	args := protoArgsToAny(req.GetArgs())
-	rows, err := s.database.Query(ctx, req.GetQuery(), args...)
+	rows, err := s.db().Query(ctx, req.GetQuery(), args...)
 	if err != nil {
 		slog.Error("database: query failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -87,7 +98,7 @@ func (s *Server) Transaction(ctx context.Context, req *databasev1.TransactionReq
 		return nil, status.Error(codes.InvalidArgument, "at least one statement is required")
 	}
 
-	err := s.database.Transaction(ctx, func(tx *db.Tx) error {
+	err := s.db().Transaction(ctx, func(tx *db.Tx) error {
 		for _, stmt := range stmts {
 			args := protoArgsToAny(stmt.GetArgs())
 			if _, err := tx.Exec(ctx, stmt.GetQuery(), args...); err != nil {
@@ -113,7 +124,7 @@ func (s *Server) Migrate(ctx context.Context, req *databasev1.MigrateRequest) (*
 			Down:    m.GetDownSql(),
 		}
 	}
-	if err := s.database.Migrate(ctx, converted); err != nil {
+	if err := s.db().Migrate(ctx, converted); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	s.migrateCount.Add(1)
@@ -121,7 +132,7 @@ func (s *Server) Migrate(ctx context.Context, req *databasev1.MigrateRequest) (*
 }
 
 func (s *Server) Rollback(ctx context.Context, req *databasev1.RollbackRequest) (*databasev1.RollbackResponse, error) {
-	if err := s.database.Rollback(ctx, int(req.GetTargetVersion())); err != nil {
+	if err := s.db().Rollback(ctx, int(req.GetTargetVersion())); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	return &databasev1.RollbackResponse{Status: "ok"}, nil
