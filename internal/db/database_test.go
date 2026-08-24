@@ -27,7 +27,7 @@ func TestExecQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
 	n, err := d.Exec(ctx, "CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -50,7 +50,7 @@ func TestExecQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
 		t.Fatal("expected at least one row")
@@ -77,10 +77,12 @@ func TestTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
-	d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+	if _, err := d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (v INTEGER)"); err != nil {
+		t.Fatalf("Exec create: %v", err)
+	}
 
 	err = d.Transaction(ctx, func(tx *Tx) error {
 		if _, err := tx.Exec(ctx, "INSERT INTO t (v) VALUES (?)", 1); err != nil {
@@ -102,7 +104,7 @@ func TestTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query count: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		t.Fatal("expected count row")
 	}
@@ -121,14 +123,16 @@ func TestTransactionRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
-	d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (v INTEGER)")
+	if _, err := d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (v INTEGER)"); err != nil {
+		t.Fatalf("Exec create: %v", err)
+	}
 
 	err = d.Transaction(ctx, func(tx *Tx) error {
-		tx.Exec(ctx, "INSERT INTO t (v) VALUES (?)", 1)
-		tx.Exec(ctx, "INSERT INTO t (v) VALUES (?)", 2)
+		_, _ = tx.Exec(ctx, "INSERT INTO t (v) VALUES (?)", 1)
+		_, _ = tx.Exec(ctx, "INSERT INTO t (v) VALUES (?)", 2)
 		return os.ErrClosed
 	})
 	if err == nil {
@@ -139,7 +143,7 @@ func TestTransactionRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query count: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		t.Fatal("expected count row")
 	}
@@ -158,7 +162,7 @@ func TestMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
 	migrations := []Migration{
@@ -178,7 +182,7 @@ func TestMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query migrations: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var names []string
 	for rows.Next() {
@@ -199,7 +203,7 @@ func TestRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
 	migrations := []Migration{
@@ -222,10 +226,12 @@ func TestRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query migrations: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if rows.Next() {
 		var count int64
-		rows.Scan(&count)
+		if err := rows.Scan(&count); err != nil {
+			t.Fatalf("Scan count: %v", err)
+		}
 		if count != 0 {
 			t.Errorf("expected 0 migrations after rollback, got %d", count)
 		}
@@ -238,11 +244,15 @@ func TestConcurrentReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
-	d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (v INTEGER)")
-	d.Exec(ctx, "INSERT INTO t (v) VALUES (1), (2), (3), (4), (5)")
+	if _, err := d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (v INTEGER)"); err != nil {
+		t.Fatalf("Exec create: %v", err)
+	}
+	if _, err := d.Exec(ctx, "INSERT INTO t (v) VALUES (1), (2), (3), (4), (5)"); err != nil {
+		t.Fatalf("Exec insert: %v", err)
+	}
 
 	errs := make(chan error, 10)
 	for i := 0; i < 10; i++ {
@@ -252,7 +262,7 @@ func TestConcurrentReads(t *testing.T) {
 				errs <- err
 				return
 			}
-			rows.Close()
+			_ = rows.Close()
 			errs <- nil
 		}()
 	}
@@ -270,17 +280,21 @@ func TestQueryParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer d.Close(context.Background())
+	defer func() { _ = d.Close(context.Background()) }()
 	ctx := context.Background()
 
-	d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, name TEXT)")
-	d.Exec(ctx, "INSERT INTO t (name) VALUES (?), (?), (?)", "a", "b", "c")
+	if _, err := d.Exec(ctx, "CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, name TEXT)"); err != nil {
+		t.Fatalf("Exec create: %v", err)
+	}
+	if _, err := d.Exec(ctx, "INSERT INTO t (name) VALUES (?), (?), (?)", "a", "b", "c"); err != nil {
+		t.Fatalf("Exec insert: %v", err)
+	}
 
 	rows, err := d.Query(ctx, "SELECT id, name FROM t WHERE name = ?", "b")
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	if !rows.Next() {
 		t.Fatal("expected row for name=b")
