@@ -66,7 +66,7 @@ func (s *Server) Query(ctx context.Context, req *databasev1.QueryRequest) (*data
 		slog.Error("database: query failed", "error", err)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols := guessColumns(req.GetQuery())
 	resp := &databasev1.QueryResponse{Columns: cols}

@@ -13,7 +13,7 @@ func TestSettingsDBPath(t *testing.T) {
 	if err := m.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	defer m.Stop(t.Context())
+	defer func() { _ = m.Stop(t.Context()) }()
 
 	if err := m.UpdateSetting("db_path", path2); err != nil {
 		t.Fatal(err)

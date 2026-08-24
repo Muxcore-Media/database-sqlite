@@ -107,7 +107,7 @@ func (m *Module) Stop(ctx context.Context) error {
 		m.grpcSrv.GracefulStop()
 	}
 	if m.database != nil {
-		m.database.Close(ctx)
+		_ = m.database.Close(ctx)
 	}
 	slog.Info("database-sqlite stopped")
 	return nil
