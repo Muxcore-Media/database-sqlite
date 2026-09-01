@@ -7,7 +7,5 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/module ./cmd/module
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /build/module /
-EXPOSE 0
-HEALTHCHECK --interval=30s --timeout=5s --start-period=3s --retries=3 \
-  CMD ["/module", "--health-check"]
+EXPOSE 9700
 ENTRYPOINT ["/module"]

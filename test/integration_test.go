@@ -4,54 +4,66 @@ package test
 
 import (
 	"context"
-	"os"
+	"net"
+	"path/filepath"
 	"testing"
-	"time"
 
-	modulev1 "github.com/Muxcore-Media/core/proto/gen/muxcore/module/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	databasev1 "github.com/Muxcore-Media/core/proto/gen/muxcore/database/v1"
+	"github.com/Muxcore-Media/database-sqlite/internal/db"
+	"github.com/Muxcore-Media/database-sqlite/internal/server"
 )
 
-func TestModuleRegistration(t *testing.T) {
-	addr := os.Getenv("MUXCORE_GRPC_ADDR")
-	if addr == "" {
-		t.Skip("MUXCORE_GRPC_ADDR not set")
+func TestDatabaseServiceIntegration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "integration.db")
+	d, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
 	}
+	defer func() { _ = d.Close(context.Background()) }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	srv := server.New(d)
+	lis := bufconn.Listen(1024 * 1024)
+	gs := grpc.NewServer()
+	srv.RegisterWithGRPC(gs)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
 
-	conn, err := grpc.DialContext(ctx, addr,
+	conn, err := grpc.NewClient("passthrough://bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return lis.Dial()
+		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
-		t.Fatalf("dial core: %v", err)
+		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
 
-	reg := modulev1.NewModuleRegistrationClient(conn)
-	resp, err := reg.Register(ctx, &modulev1.RegisterRequest{
-		ModuleId: "test-module",
-		ModuleInfo: &modulev1.ModuleInfo{
-			Id:           "test-module",
-			Name:         "Test Module",
-			Version:      "0.0.0-test",
-			Roles:        []string{"test"},
-			Capabilities: []string{"test"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	if !resp.Accepted {
-		t.Fatalf("registration rejected: %s", resp.Error)
-	}
-	t.Logf("registered, mesh_addr=%s node_id=%s", resp.MeshAddr, resp.NodeId)
+	client := databasev1.NewDatabaseServiceClient(conn)
+	ctx := context.Background()
 
-	_, err = reg.Unregister(ctx, &modulev1.UnregisterRequest{ModuleId: "test-module"})
+	if _, err := client.Exec(ctx, &databasev1.ExecRequest{
+		Query: "CREATE TABLE integration (id INTEGER PRIMARY KEY, label TEXT)",
+	}); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if _, err := client.Exec(ctx, &databasev1.ExecRequest{
+		Query:  "INSERT INTO integration (label) VALUES (?)",
+		Args:   []*databasev1.Value{{Kind: &databasev1.Value_StringVal{StringVal: "ok"}}},
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	resp, err := client.Query(ctx, &databasev1.QueryRequest{Query: "SELECT label FROM integration"})
 	if err != nil {
-		t.Fatalf("unregister: %v", err)
+		t.Fatalf("Query: %v", err)
+	}
+	if len(resp.Rows) != 1 || resp.Rows[0].Values[0].GetStringVal() != "ok" {
+		t.Fatalf("resp=%+v", resp)
 	}
 }

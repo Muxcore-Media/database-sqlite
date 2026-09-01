@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -15,6 +17,8 @@ import (
 	"github.com/Muxcore-Media/database-sqlite/internal/db"
 	"github.com/Muxcore-Media/database-sqlite/internal/server"
 )
+
+const defaultGRPCAddr = "127.0.0.1:9700"
 
 type Module struct {
 	database *db.Database
@@ -42,7 +46,7 @@ func NewModule(cfg Config) *Module {
 		cfg.DBPath = "muxcore.db"
 	}
 	if cfg.GRPCAddr == "" {
-		cfg.GRPCAddr = ":9700"
+		cfg.GRPCAddr = defaultGRPCAddr
 	}
 	if v := os.Getenv("SQLITE_DB_PATH"); v != "" {
 		cfg.DBPath = v
@@ -65,13 +69,16 @@ func (m *Module) Info() contracts.ModuleInfo {
 		Roles:        []string{"infrastructure"},
 		Description:  "SQLite database provider (pure Go, no CGO)",
 		Author:       "MuxCore",
-		Capabilities: []string{contracts.CapabilityDatabase, "database.sqlite", "settings"},
+		Capabilities: []string{contracts.CapabilityDatabase, "database.sqlite", "settings", "backupable"},
 		HTTPAddr:     m.grpcAddr,
 	}
 }
 
 func (m *Module) Init(ctx context.Context) error {
-	d, err := db.Open(m.dbPath)
+	if err := validateDBPath(m.dbPath); err != nil {
+		return err
+	}
+	d, err := openValidatedDB(m.dbPath)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -106,6 +113,9 @@ func (m *Module) Stop(ctx context.Context) error {
 	if m.grpcSrv != nil {
 		m.grpcSrv.GracefulStop()
 	}
+	if m.srv != nil {
+		m.srv.Drain()
+	}
 	if m.database != nil {
 		_ = m.database.Close(ctx)
 	}
@@ -118,4 +128,32 @@ func (m *Module) Health(ctx context.Context) error {
 		return fmt.Errorf("not initialized")
 	}
 	return m.database.Health(ctx)
+}
+
+func validateDBPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("db_path must not be empty")
+	}
+	if strings.Contains(path, "..") {
+		return fmt.Errorf("db_path must not contain .. path segments")
+	}
+	clean := filepath.Clean(path)
+	if clean == "." || clean == string(filepath.Separator) {
+		return fmt.Errorf("db_path must name a database file")
+	}
+	return nil
+}
+
+func openValidatedDB(path string) (*db.Database, error) {
+	if err := validateDBPath(path); err != nil {
+		return nil, err
+	}
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, fmt.Errorf("create db directory: %w", err)
+		}
+	}
+	return db.Open(path)
 }

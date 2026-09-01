@@ -9,7 +9,20 @@
   "capabilities": [
     "database",
     "database.sqlite",
-    "settings"
+    "settings",
+    "backupable"
   ],
-  "contracts": []
+  "contracts": [
+    {
+      "repo": "github.com/Muxcore-Media/core/pkg/contracts",
+      "interface": "DatabaseProvider",
+      "version": "v0.5.8"
+    },
+    {
+      "repo": "github.com/Muxcore-Media/core/proto/gen/muxcore/database/v1",
+      "interface": "DatabaseService",
+      "version": "v0.5.8"
+    }
+  ],
+  "minCoreVersion": "0.5.8"
 }

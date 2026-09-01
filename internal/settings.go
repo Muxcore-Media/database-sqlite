@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
-	"github.com/Muxcore-Media/database-sqlite/internal/db"
 )
 
 func (m *Module) Settings() []contracts.SettingDef {
@@ -47,6 +46,9 @@ func (m *Module) updateSetting(key, value string) error {
 }
 
 func (m *Module) setDBPath(path string) error {
+	if err := validateDBPath(path); err != nil {
+		return err
+	}
 	m.cfgMu.Lock()
 	defer m.cfgMu.Unlock()
 	if path == m.dbPath {
@@ -56,7 +58,7 @@ func (m *Module) setDBPath(path string) error {
 		m.dbPath = path
 		return nil
 	}
-	d, err := db.Open(path)
+	d, err := openValidatedDB(path)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -64,6 +66,7 @@ func (m *Module) setDBPath(path string) error {
 	m.database = d
 	m.dbPath = path
 	if old != nil {
+		m.srv.Drain()
 		_ = old.Close(context.Background())
 	}
 	return nil

@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
-	"sync/atomic"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,29 +16,59 @@ import (
 
 type Server struct {
 	databasev1.UnimplementedDatabaseServiceServer
-	dbPtr        atomic.Pointer[db.Database]
-	execCount    atomic.Int64
-	queryCount   atomic.Int64
-	migrateCount atomic.Int64
+	dbPtr    dbPtr
+	inflight sync.WaitGroup
+}
+
+type dbPtr struct {
+	mu sync.RWMutex
+	d  *db.Database
 }
 
 func New(d *db.Database) *Server {
 	s := &Server{}
-	s.dbPtr.Store(d)
+	s.dbPtr.set(d)
 	return s
 }
 
-// ReplaceDatabase swaps the backing SQLite handle. Returns the previous DB (caller should Close).
+// ReplaceDatabase swaps the backing SQLite handle. Returns the previous DB (caller should Drain then Close).
 func (s *Server) ReplaceDatabase(d *db.Database) *db.Database {
-	return s.dbPtr.Swap(d)
+	return s.dbPtr.swap(d)
 }
 
-func (s *Server) db() *db.Database {
-	return s.dbPtr.Load()
+// Drain waits for in-flight RPC handlers to finish.
+func (s *Server) Drain() {
+	s.inflight.Wait()
+}
+
+func (p *dbPtr) get() *db.Database {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.d
+}
+
+func (p *dbPtr) set(d *db.Database) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.d = d
+}
+
+func (p *dbPtr) swap(d *db.Database) *db.Database {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	old := p.d
+	p.d = d
+	return old
 }
 
 func (s *Server) RegisterWithGRPC(srv *grpc.Server) {
 	databasev1.RegisterDatabaseServiceServer(srv, s)
+}
+
+func (s *Server) withDB(fn func(*db.Database) error) error {
+	s.inflight.Add(1)
+	defer s.inflight.Done()
+	return fn(s.dbPtr.get())
 }
 
 func (s *Server) Exec(ctx context.Context, req *databasev1.ExecRequest) (*databasev1.ExecResponse, error) {
@@ -47,12 +76,16 @@ func (s *Server) Exec(ctx context.Context, req *databasev1.ExecRequest) (*databa
 		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
 	args := protoArgsToAny(req.GetArgs())
-	n, err := s.db().Exec(ctx, req.GetQuery(), args...)
+	var n int64
+	err := s.withDB(func(d *db.Database) error {
+		var execErr error
+		n, execErr = d.Exec(ctx, req.GetQuery(), args...)
+		return execErr
+	})
 	if err != nil {
 		slog.Error("database: exec failed", "error", err)
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, mapDBError(err)
 	}
-	s.execCount.Add(1)
 	return &databasev1.ExecResponse{RowsAffected: n}, nil
 }
 
@@ -61,34 +94,46 @@ func (s *Server) Query(ctx context.Context, req *databasev1.QueryRequest) (*data
 		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
 	args := protoArgsToAny(req.GetArgs())
-	rows, err := s.db().Query(ctx, req.GetQuery(), args...)
+
+	var resp *databasev1.QueryResponse
+	err := s.withDB(func(d *db.Database) error {
+		rows, err := d.Query(ctx, req.GetQuery(), args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+
+		cols, err := rows.Columns()
+		if err != nil {
+			return fmt.Errorf("columns: %w", err)
+		}
+		resp = &databasev1.QueryResponse{Columns: cols}
+
+		for rows.Next() {
+			values := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range values {
+				ptrs[i] = &values[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
+				return fmt.Errorf("scan: %w", err)
+			}
+			protoRow := &databasev1.Row{}
+			for _, v := range values {
+				protoRow.Values = append(protoRow.Values, anyToProtoValue(v))
+			}
+			resp.Rows = append(resp.Rows, protoRow)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("rows: %w", err)
+		}
+		resp.Count = int32(len(resp.Rows))
+		return nil
+	})
 	if err != nil {
 		slog.Error("database: query failed", "error", err)
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, mapDBError(err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	cols := guessColumns(req.GetQuery())
-	resp := &databasev1.QueryResponse{Columns: cols}
-
-	for rows.Next() {
-		values := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range values {
-			ptrs[i] = &values[i]
-		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("scan: %s", err))
-		}
-		protoRow := &databasev1.Row{}
-		for _, v := range values {
-			protoRow.Values = append(protoRow.Values, anyToProtoValue(v))
-		}
-		resp.Rows = append(resp.Rows, protoRow)
-	}
-
-	resp.Count = int32(len(resp.Rows))
-	s.queryCount.Add(1)
 	return resp, nil
 }
 
@@ -98,17 +143,19 @@ func (s *Server) Transaction(ctx context.Context, req *databasev1.TransactionReq
 		return nil, status.Error(codes.InvalidArgument, "at least one statement is required")
 	}
 
-	err := s.db().Transaction(ctx, func(tx *db.Tx) error {
-		for _, stmt := range stmts {
-			args := protoArgsToAny(stmt.GetArgs())
-			if _, err := tx.Exec(ctx, stmt.GetQuery(), args...); err != nil {
-				return err
+	err := s.withDB(func(d *db.Database) error {
+		return d.Transaction(ctx, func(tx *db.Tx) error {
+			for _, stmt := range stmts {
+				args := protoArgsToAny(stmt.GetArgs())
+				if _, err := tx.Exec(ctx, stmt.GetQuery(), args...); err != nil {
+					return err
+				}
 			}
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, mapDBError(err)
 	}
 	return &databasev1.TransactionResponse{Status: "ok"}, nil
 }
@@ -124,32 +171,23 @@ func (s *Server) Migrate(ctx context.Context, req *databasev1.MigrateRequest) (*
 			Down:    m.GetDownSql(),
 		}
 	}
-	if err := s.db().Migrate(ctx, converted); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+	err := s.withDB(func(d *db.Database) error {
+		return d.Migrate(ctx, converted)
+	})
+	if err != nil {
+		return nil, mapDBError(err)
 	}
-	s.migrateCount.Add(1)
 	return &databasev1.MigrateResponse{Status: "ok"}, nil
 }
 
 func (s *Server) Rollback(ctx context.Context, req *databasev1.RollbackRequest) (*databasev1.RollbackResponse, error) {
-	if err := s.db().Rollback(ctx, int(req.GetTargetVersion())); err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+	err := s.withDB(func(d *db.Database) error {
+		return d.Rollback(ctx, int(req.GetTargetVersion()))
+	})
+	if err != nil {
+		return nil, mapDBError(err)
 	}
 	return &databasev1.RollbackResponse{Status: "ok"}, nil
-}
-
-func (s *Server) Metrics() string {
-	var b strings.Builder
-	b.WriteString("# HELP db_exec_total Total database exec operations\n")
-	b.WriteString("# TYPE db_exec_total counter\n")
-	fmt.Fprintf(&b, "db_exec_total %d\n", s.execCount.Load())
-	b.WriteString("# HELP db_query_total Total database query operations\n")
-	b.WriteString("# TYPE db_query_total counter\n")
-	fmt.Fprintf(&b, "db_query_total %d\n", s.queryCount.Load())
-	b.WriteString("# HELP db_migrate_total Total database migration operations\n")
-	b.WriteString("# TYPE db_migrate_total counter\n")
-	fmt.Fprintf(&b, "db_migrate_total %d\n", s.migrateCount.Load())
-	return b.String()
 }
 
 func protoArgsToAny(args []*databasev1.Value) []any {
@@ -194,37 +232,4 @@ func anyToProtoValue(v any) *databasev1.Value {
 	default:
 		return &databasev1.Value{Kind: &databasev1.Value_NullVal{NullVal: true}}
 	}
-}
-
-func guessColumns(query string) []string {
-	upper := strings.ToUpper(strings.TrimSpace(query))
-	selectIdx := strings.Index(upper, "SELECT ")
-	if selectIdx == -1 {
-		return []string{"col"}
-	}
-	fromIdx := strings.Index(upper[selectIdx:], " FROM ")
-	if fromIdx == -1 {
-		return []string{"col"}
-	}
-	colsPart := upper[selectIdx+7 : selectIdx+fromIdx]
-	colsPart = strings.TrimSpace(colsPart)
-
-	if colsPart == "*" {
-		return []string{"col"}
-	}
-
-	var cols []string
-	for _, part := range strings.Split(colsPart, ",") {
-		part = strings.TrimSpace(part)
-		if idx := strings.LastIndex(part, " AS "); idx != -1 {
-			part = strings.TrimSpace(part[idx+4:])
-		} else if idx := strings.LastIndex(part, "."); idx != -1 {
-			part = part[idx+1:]
-		}
-		cols = append(cols, strings.TrimSpace(part))
-	}
-	if len(cols) == 0 {
-		return []string{"col"}
-	}
-	return cols
 }

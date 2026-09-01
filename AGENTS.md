@@ -8,7 +8,7 @@ MuxCore sidecar module (`database-sqlite`). Workspace deploy and SSH: [`../AGENT
 |-------|-------|
 | Directory | `database-sqlite` |
 | Capabilities | see muxcore.json |
-| Contracts | none declared |
+| Contracts | DatabaseProvider, DatabaseService, Backupable (see muxcore.json) |
 
 ## Agent rules
 

@@ -26,12 +26,12 @@ tidy:
 	$(GO) mod tidy
 
 docker:
-	docker build -t ghcr.io/yourorg/$(BINARY):$(VERSION) .
-	docker tag ghcr.io/yourorg/$(BINARY):$(VERSION) ghcr.io/yourorg/$(BINARY):latest
+	docker build -t ghcr.io/muxcore-media/$(BINARY):$(VERSION) .
+	docker tag ghcr.io/muxcore-media/$(BINARY):$(VERSION) ghcr.io/muxcore-media/$(BINARY):latest
 
 docker-push: docker
-	docker push ghcr.io/yourorg/$(BINARY):$(VERSION)
-	docker push ghcr.io/yourorg/$(BINARY):latest
+	docker push ghcr.io/muxcore-media/$(BINARY):$(VERSION)
+	docker push ghcr.io/muxcore-media/$(BINARY):latest
 
 ci: lint test build
 

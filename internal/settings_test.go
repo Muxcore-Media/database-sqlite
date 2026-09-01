@@ -27,4 +27,7 @@ func TestSettingsDBPath(t *testing.T) {
 	if err := m.UpdateSetting("db_path", ""); err == nil {
 		t.Fatal("expected error")
 	}
+	if err := m.UpdateSetting("db_path", "../escape.db"); err == nil {
+		t.Fatal("expected error for path traversal")
+	}
 }

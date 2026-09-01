@@ -15,15 +15,22 @@ services:
 
   database-sqlite:
     build:
-      context: .
+      context: ..
       dockerfile: Dockerfile
     ports:
-      - "9700"
+      - "9700:9700"
     environment:
       MUXCORE_GRPC_ADDR: core:9090
       MUXCORE_INSECURE_DISABLE_TLS: "true"
       MUXCORE_LOG_LEVEL: debug
       MUXCORE_MODULE_ID: database-sqlite
+      SQLITE_DB_PATH: /data/muxcore.db
+      DATABASE_GRPC_ADDR: 127.0.0.1:9700
+    volumes:
+      - database-data:/data
     depends_on:
       core:
         condition: service_healthy
+
+volumes:
+  database-data:

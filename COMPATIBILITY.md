@@ -4,21 +4,23 @@
 
 | Module Version | Core Version | Status |
 |----------------|-------------|--------|
-| v0.1.0         | v0.4.0+     | Current |
+| v0.1.5         | v0.5.8+     | Current |
 
 ## Capabilities
 
 | Capability | Status |
 |------------|--------|
 | `database` | Current |
+| `backupable` | Current |
+| `settings` | Current |
 
 ## Contracts
 
 | Contract | Capability | Status |
 |----------|-----------|--------|
-| DatabaseProvider (gRPC `DatabaseService`) | `database` | Current |
-
-`muxcore.json` lists `"contracts": []` (no separate contract package ID); the module registers capability `database` and serves the core database gRPC API.
+| DatabaseProvider (`core/pkg/contracts`) | `database` | Current |
+| DatabaseService (`core/proto/.../database/v1`) | `database` | Current |
+| Backupable (`core/pkg/contracts`) | `backupable` | Current |
 
 ## Breaking Changes
 
