@@ -24,6 +24,7 @@ services:
       MUXCORE_INSECURE_DISABLE_TLS: "true"
       MUXCORE_LOG_LEVEL: debug
       MUXCORE_MODULE_ID: database-sqlite
+      DATABASE_GRPC_ADDR: 127.0.0.1:9700
     depends_on:
       core:
         condition: service_healthy
