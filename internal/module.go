@@ -22,16 +22,18 @@ type Module struct {
 	grpcSrv  *grpc.Server
 	lis      net.Listener
 
-	id       string
-	cfgMu    sync.RWMutex
-	dbPath   string
-	grpcAddr string
+	id          string
+	cfgMu       sync.RWMutex
+	dbPath      string
+	grpcAddr    string
+	moduleToken string
 }
 
 type Config struct {
-	ID       string
-	DBPath   string
-	GRPCAddr string
+	ID          string
+	DBPath      string
+	GRPCAddr    string
+	ModuleToken string
 }
 
 func NewModule(cfg Config) *Module {
@@ -42,7 +44,7 @@ func NewModule(cfg Config) *Module {
 		cfg.DBPath = "muxcore.db"
 	}
 	if cfg.GRPCAddr == "" {
-		cfg.GRPCAddr = ":9700"
+		cfg.GRPCAddr = "127.0.0.1:9700"
 	}
 	if v := os.Getenv("SQLITE_DB_PATH"); v != "" {
 		cfg.DBPath = v
@@ -50,10 +52,14 @@ func NewModule(cfg Config) *Module {
 	if v := os.Getenv("DATABASE_GRPC_ADDR"); v != "" {
 		cfg.GRPCAddr = v
 	}
+	if cfg.ModuleToken == "" {
+		cfg.ModuleToken = moduleTokenFromEnv()
+	}
 	return &Module{
-		id:       cfg.ID,
-		dbPath:   cfg.DBPath,
-		grpcAddr: cfg.GRPCAddr,
+		id:          cfg.ID,
+		dbPath:      cfg.DBPath,
+		grpcAddr:    cfg.GRPCAddr,
+		moduleToken: cfg.ModuleToken,
 	}
 }
 
@@ -89,7 +95,7 @@ func (m *Module) Init(ctx context.Context) error {
 }
 
 func (m *Module) Start(ctx context.Context) error {
-	m.grpcSrv = grpc.NewServer()
+	m.grpcSrv = grpc.NewServer(grpc.UnaryInterceptor(authUnaryInterceptor(m.moduleToken)))
 	m.srv.RegisterWithGRPC(m.grpcSrv)
 	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
 

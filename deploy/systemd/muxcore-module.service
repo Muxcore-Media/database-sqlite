@@ -10,6 +10,7 @@ Group=muxcore
 ExecStart=/usr/local/bin/database-sqlite \
   --muxcore-mesh-addr localhost:9090 \
   --muxcore-module-id database-sqlite
+Environment=DATABASE_GRPC_ADDR=127.0.0.1:9700
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
