@@ -9,10 +9,12 @@ import (
 	"sync"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
 	"github.com/Muxcore-Media/database-sqlite/internal/db"
+	"github.com/Muxcore-Media/database-sqlite/internal/grpctls"
 	"github.com/Muxcore-Media/database-sqlite/internal/server"
 )
 
@@ -95,7 +97,22 @@ func (m *Module) Init(ctx context.Context) error {
 }
 
 func (m *Module) Start(ctx context.Context) error {
-	m.grpcSrv = grpc.NewServer(grpc.UnaryInterceptor(authUnaryInterceptor(m.moduleToken)))
+	var grpcOpts []grpc.ServerOption
+	tlsCfg, err := grpctls.ServerConfig(m.dbPath)
+	if err != nil {
+		return fmt.Errorf("gRPC TLS: %w", err)
+	}
+	if tlsCfg != nil {
+		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+		slog.Info("database-sqlite gRPC TLS enabled", "addr", m.grpcAddr)
+	} else {
+		slog.Warn("database-sqlite gRPC listening without TLS (dev only)",
+			"addr", m.grpcAddr,
+			"hint", "unset MUXCORE_INSECURE_DISABLE_TLS for production",
+		)
+	}
+	grpcOpts = append(grpcOpts, grpc.UnaryInterceptor(authUnaryInterceptor(m.moduleToken)))
+	m.grpcSrv = grpc.NewServer(grpcOpts...)
 	m.srv.RegisterWithGRPC(m.grpcSrv)
 	modulesdk.RegisterSettings(m.grpcSrv, m.id, m)
 
