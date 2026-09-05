@@ -25,7 +25,8 @@ Opened with WAL journaling, busy timeout, and foreign keys enabled. Single-conne
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SQLITE_DB_PATH` | `muxcore.db` | SQLite database file path |
-| `DATABASE_GRPC_ADDR` | `:9700` | gRPC listen address |
+| `DATABASE_GRPC_ADDR` | `127.0.0.1:9700` | gRPC listen address (loopback by default) |
+| `DATABASE_MODULE_TOKEN` | — | Bearer token for direct module RPC access (optional; mesh callers use verified `x-caller-id`) |
 
 ---
 
