@@ -13,6 +13,7 @@ import (
 
 	"github.com/Muxcore-Media/core/pkg/contracts"
 	modulesdk "github.com/Muxcore-Media/core/sdk/go/module"
+	manifest "github.com/Muxcore-Media/database-sqlite"
 	"github.com/Muxcore-Media/database-sqlite/internal/db"
 	"github.com/Muxcore-Media/database-sqlite/internal/grpctls"
 	"github.com/Muxcore-Media/database-sqlite/internal/server"
@@ -69,7 +70,7 @@ func (m *Module) Info() contracts.ModuleInfo {
 	return contracts.ModuleInfo{
 		ID:           m.id,
 		Name:         "Database SQLite",
-		Version:      "0.1.5",
+		Version:      modulesdk.ManifestVersion(manifest.ManifestJSON),
 		Roles:        []string{"infrastructure"},
 		Description:  "SQLite database provider (pure Go, no CGO)",
 		Author:       "MuxCore",
