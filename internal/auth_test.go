@@ -183,6 +183,8 @@ func TestAuthorizeDatabaseRPC_RejectsWrongModuleToken(t *testing.T) {
 }
 
 func TestModuleStart_RejectsUnauthenticatedOverGRPC(t *testing.T) {
+	// The module enables TLS by default; this test dials plaintext.
+	t.Setenv("MUXCORE_INSECURE_DISABLE_TLS", "true")
 	dir := t.TempDir()
 	m := NewModule(Config{
 		DBPath:      filepath.Join(dir, "test.db"),
